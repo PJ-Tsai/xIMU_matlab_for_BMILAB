@@ -196,20 +196,27 @@ for i = 1:length(R)
 end
 
 % eulerAngles [roll, pitch, yaw] (deg)
-
 % rotation angle
 
+eulerAngles = eulerAngles - eulerAngles(end, :);
+
+linPosHP = linPosHP - linPosHP(end, :);
 linPos_mm = 1000 * linPosHP;
 
+% sensor timestamps to ultrasound timestamps
+
+secOfDay = round(mod(timestamp, 86400) + 28800, 3);
+
 % table
-T_out = table(timestamp, ...
+T_out = table(secOfDay,...
               linPos_mm(:,1), linPos_mm(:,2), linPos_mm(:,3), ...
               eulerAngles(:,1), eulerAngles(:,2), eulerAngles(:,3), ...
               'VariableNames', {'Timestamp (s)', 'X (mm)', 'Y (mm)', 'Z (mm)', 'Roll (deg)', 'Pitch (deg)', 'Yaw (deg)'});
 
-% output0 CSV
+% output CSV
 %writetable(T_out, 'output_position_and_orientation.csv');
-writetable(T_out, 'linear_position_test_data1_2.csv');
+%writetable(T_out, 'linear_position_test_data1_3.csv');
+writetable(T_out, 'linear_position_2025_04_23_new.csv');
 
 % linPosHP_mm = 1000.* linPosHP;
 % data_to_save = [linPosHP_mm, timestamp]; %% time stamp included
