@@ -230,6 +230,7 @@ function fig = SixDOFanimation(varargin)
         if((p(i,2) + AxisLength) > Ylim(2)), Ylim(2) = p(i,2) + LimitRatio*AxisLength; axisLimChanged = true; end
         if((p(i,3) + AxisLength) > Zlim(2)), Zlim(2) = p(i,3) + LimitRatio*AxisLength; axisLimChanged = true; end
         if(axisLimChanged), set(gca, 'Xlim', Xlim, 'Ylim', Ylim, 'Zlim', Zlim); end
+        %axis([-0.3 0.3 -0.3 0.3 -0.3 0.3]);
         drawnow;
 
         % Adjust view

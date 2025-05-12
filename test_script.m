@@ -21,10 +21,16 @@ gyr_0 = [xIMUdata.CalInertialAndMagneticData.Gyroscope.X...
 acc_0 = [xIMUdata.CalInertialAndMagneticData.Accelerometer.X...
        xIMUdata.CalInertialAndMagneticData.Accelerometer.Y...
        xIMUdata.CalInertialAndMagneticData.Accelerometer.Z];	% accelerometer
-  
-% test
+
+mag_0 =  [xIMUdata.CalInertialAndMagneticData.Magnetometer.X...
+       xIMUdata.CalInertialAndMagneticData.Magnetometer.Y...
+       xIMUdata.CalInertialAndMagneticData.Magnetometer.Z];	% magnetometer
+
+
+% change unit
 gyr = gyr_0 * 180 / pi;
 acc = acc_0 / 9.81;
+mag = mag_0 / 100;
 % Plot
 figure('NumberTitle', 'off', 'Name', 'Gyroscope');
 hold on;
@@ -46,15 +52,24 @@ ylabel('g');
 title('Accelerometer');
 legend('X', 'Y', 'Z');
 
-%% Process data through AHRS algorithm (calcualte orientation)
-% See: http://www.x-io.co.uk/open-source-imu-and-ahrs-algorithms/
+%% Estimate initial orientation from accelerometer
+
+acc0 = acc(1,:);
+ax = acc0(1); ay = acc0(2); az = acc0(3);
+
+roll0  = atan2(ay, az);
+pitch0 = atan2(-ax, sqrt(ay^2 + az^2));
+yaw0   = 0;
+
+q0 = rotMat2quatern(euler2rotMat(roll0, pitch0, yaw0)); % euler to quatern
+
+%% Process data through AHRS algorithm with initial orientation
 
 R = zeros(3,3,length(gyr));     % rotation matrix describing sensor relative to Earth
-
-ahrs = MahonyAHRS('SamplePeriod', samplePeriod, 'Kp', 1);
-
+%ahrs = MahonyAHRS('SamplePeriod', samplePeriod, 'Kp', 1);
+ahrs = MahonyAHRS('SamplePeriod', samplePeriod, 'Kp', 1, 'Quaternion', q0);  % initialization with estimated pose
 for i = 1:length(gyr)
-    ahrs.UpdateIMU(gyr(i,:) * (pi/180), acc(i,:));	% gyroscope units must be radians
+    ahrs.Update(gyr(i,:) * (pi/180), acc(i,:), mag(i,:));	% gyroscope units must be radians
     R(:,:,i) = quatern2rotMat(ahrs.Quaternion)';    % transpose because ahrs provides Earth relative to sensor
 end
 
@@ -78,9 +93,29 @@ title('''Tilt-compensated'' accelerometer');
 legend('X', 'Y', 'Z');
 
 %% Calculate linear acceleration in Earth frame (subtracting gravity)
+% Calculate gravity in Earth frame using rotation matrix (sensor relative to Earth)
+gravityEarth = [0; 0; 1];
 
-linAcc = tcAcc - [zeros(length(tcAcc), 1), zeros(length(tcAcc), 1), ones(length(tcAcc), 1)];
-linAcc = linAcc * 9.81;     % convert from 'g' to m/s/s
+gravitySensor = zeros(size(acc));
+linAcc_sensor = zeros(size(acc));
+linAcc = zeros(size(acc));
+
+for i = 1:size(acc,1)
+    % transfer gravity from Earth frame to Sensor frame
+    gravitySensor_i = R(:,:,i)' * gravityEarth;  % column vector
+    gravitySensor(i,:) = gravitySensor_i';
+
+    % calculate linear acceleration（sensor frame）
+    linAcc_sensor(i,:) = acc(i,:) - gravitySensor(i,:);
+
+    % transfer to Earth frame
+    %linAcc(i,:) = (R(:,:,i) * linAcc_sensor(i,:)')';
+end
+
+% convert to m/s²
+linAcc = linAcc_sensor * 9.81;
+%linAcc = tcAcc - [zeros(length(tcAcc), 1), zeros(length(tcAcc), 1), ones(length(tcAcc), 1)];
+%linAcc = linAcc * 9.81;     % convert from 'g' to m/s/s
 
 % Plot
 figure('NumberTitle', 'off', 'Name', 'Linear Acceleration');
@@ -92,6 +127,7 @@ xlabel('sample');
 ylabel('g');
 title('Linear acceleration');
 legend('X', 'Y', 'Z');
+
 
 %% Calculate linear velocity (integrate acceleartion)
 
@@ -114,15 +150,11 @@ legend('X', 'Y', 'Z');
 
 %% High-pass filter linear velocity to remove drift
 
-order = 1;
-filtCutOff_XY = 0.05;  % cutoff freq for X, Y axis
-filtCutOff_Z  = 0.15;   % cutoff freq for Z axis
+order = 1
+filtCutOff = 0.2;
+[b, a] = butter(order, (2*filtCutOff)/(1/samplePeriod), 'high');
+linVelHP = filtfilt(b, a, linVel);
 
-[b_XY, a_XY] = butter(order, (2*filtCutOff_XY)/(1/samplePeriod), 'high');
-[b_Z, a_Z] = butter(order, (2*filtCutOff_Z)/(1/samplePeriod), 'high');
-
-linVelHP(:,1:2) = filtfilt(b_XY, a_XY, linVel(:,1:2)); % X, Y axis
-linVelHP(:,3)   = filtfilt(b_Z, a_Z, linVel(:,3));     % Z axis
 % Plot
 figure('NumberTitle', 'off', 'Name', 'High-pass filtered Linear Velocity');
 hold on;
@@ -133,6 +165,7 @@ xlabel('sample');
 ylabel('g');
 title('High-pass filtered linear velocity');
 legend('X', 'Y', 'Z');
+
 
 %% Calculate linear position (integrate velocity)
 
@@ -156,14 +189,9 @@ legend('X', 'Y', 'Z');
 %% High-pass filter linear position to remove drift
 
 order = 1;
-filtCutOff_XY = 0.05;  % cutoff freq for X, Y axis
-filtCutOff_Z  = 0.15;   % cutoff freq for Z axis
-
-[b_XY, a_XY] = butter(order, (2*filtCutOff_XY)/(1/samplePeriod), 'high');
-[b_Z, a_Z] = butter(order, (2*filtCutOff_Z)/(1/samplePeriod), 'high');
-
-linPosHP(:,1:2) = filtfilt(b_XY, a_XY, linPos(:,1:2)); % X, Y axis
-linPosHP(:,3)   = filtfilt(b_Z, a_Z, linPos(:,3));     % Z axis
+filtCutOff = 0.2;
+[b, a] = butter(order, (2*filtCutOff)/(1/samplePeriod), 'high');
+linPosHP = filtfilt(b, a, linPos);
 
 % Plot
 figure('NumberTitle', 'off', 'Name', 'High-pass filtered Linear Position');
@@ -177,15 +205,14 @@ title('High-pass filtered linear position');
 legend('X', 'Y', 'Z');
 
 %% Play animation
-
-SamplePlotFreq = 3;
+SamplePlotFreq = 1;
 
 SixDOFanimation(linPosHP, R, ...
                 'SamplePlotFreq', SamplePlotFreq, 'Trail', 'Off', ...
                 'Position', [9 39 1280 720], ...
                 'AxisLength', 0.1, 'ShowArrowHead', false, ...
                 'Xlabel', 'X (m)', 'Ylabel', 'Y (m)', 'Zlabel', 'Z (m)', 'ShowLegend', false, 'Title', 'Unfiltered',...
-                'CreateAVI', false, 'AVIfileNameEnum', false, 'AVIfps', ((1/samplePeriod) / SamplePlotFreq));            
+                'CreateAVI', false, 'AVIfileNameEnum', false, 'AVIfps', ((1/samplePeriod) / SamplePlotFreq)); 
  
 %% End of script
 % Convert rotation matrix R to Euler angles (roll, pitch, yaw)
@@ -198,9 +225,9 @@ end
 % eulerAngles [roll, pitch, yaw] (deg)
 % rotation angle
 
-eulerAngles = eulerAngles - eulerAngles(end, :);
+%eulerAngles = eulerAngles - eulerAngles(end, :);
 
-linPosHP = linPosHP - linPosHP(end, :);
+%linPosHP = linPosHP - linPosHP(end, :);
 linPos_mm = 1000 * linPosHP;
 
 % sensor timestamps to ultrasound timestamps
@@ -216,7 +243,7 @@ T_out = table(secOfDay,...
 % output CSV
 %writetable(T_out, 'output_position_and_orientation.csv');
 %writetable(T_out, 'linear_position_test_data1_3.csv');
-writetable(T_out, 'linear_position_2025_04_23_new.csv');
+writetable(T_out, 'linear_position_0506_3_new.csv');
 
 % linPosHP_mm = 1000.* linPosHP;
 % data_to_save = [linPosHP_mm, timestamp]; %% time stamp included
